@@ -9,6 +9,8 @@ from __future__ import (absolute_import, division, print_function,
 cimport numpy as np  # noqa
 import numpy as np
 from six.moves import range
+import time
+from tqdm import tqdm
 
 from .algo_base import AlgoBase
 from .predictions import PredictionImpossible
@@ -111,7 +113,7 @@ class SVD(AlgoBase):
                  init_std_dev=.1, lr_all=.005,
                  reg_all=.02, lr_bu=None, lr_bi=None, lr_pu=None, lr_qi=None,
                  reg_bu=None, reg_bi=None, reg_pu=None, reg_qi=None,
-                 verbose=False):
+                 shuffle_sgd=True, verbose=False):                  ################
 
         self.n_factors = n_factors
         self.n_epochs = n_epochs
@@ -126,6 +128,7 @@ class SVD(AlgoBase):
         self.reg_bi = reg_bi if reg_bi is not None else reg_all
         self.reg_pu = reg_pu if reg_pu is not None else reg_all
         self.reg_qi = reg_qi if reg_qi is not None else reg_all
+        self.shuffle_sgd = shuffle_sgd                               ################
         self.verbose = verbose
 
         AlgoBase.__init__(self)
@@ -177,6 +180,9 @@ class SVD(AlgoBase):
         cdef np.ndarray[np.double_t, ndim=2] pu
         # item factors
         cdef np.ndarray[np.double_t, ndim=2] qi
+        
+        # For shuffled iteration
+        cdef list all_ratings = []
 
         cdef int u, i, f
         cdef double r, err, dot, puf, qif
@@ -205,7 +211,20 @@ class SVD(AlgoBase):
         for current_epoch in range(self.n_epochs):
             if self.verbose:
                 print("Processing epoch {}".format(current_epoch))
-            for u, i, r in trainset.all_ratings():
+                
+            ### NEW CODE ###
+            # Iterate over all ratings
+            all_ratings = list(trainset.all_ratings())
+            if self.shuffle_sgd:
+                np.random.shuffle(all_ratings)
+                
+            # Wrap with tqdm if verbose is True
+            if self.verbose:
+                iterator = tqdm(all_ratings, mininterval=10)
+            else:
+                iterator = all_ratings
+            for u, i, r in iterator:
+            ################
 
                 # compute current error
                 dot = 0  # <q_i, p_u>
@@ -224,6 +243,14 @@ class SVD(AlgoBase):
                     qif = qi[i, f]
                     pu[u, f] += lr_pu * (err * qif - reg_pu * puf)
                     qi[i, f] += lr_qi * (err * puf - reg_qi * qif)
+            
+            ### NEW CODE ###
+            # Scale learning rates at each iteration
+            lr_bu *= 0.9
+            lr_bi *= 0.9
+            lr_pu *= 0.9
+            lr_qi *= 0.9
+            ################
 
         self.bu = bu
         self.bi = bi
@@ -256,7 +283,7 @@ class SVD(AlgoBase):
 
         return est
 
-
+        
 class SVDpp(AlgoBase):
     """The *SVD++* algorithm, an extension of :class:`SVD` taking into account
     implicit ratings.
@@ -325,10 +352,10 @@ class SVDpp(AlgoBase):
         verbose: If ``True``, prints the current epoch. Default is ``False``.
     """
 
-    def __init__(self, n_factors=20, n_epochs=20, init_mean=0, init_std_dev=.1,
+    def __init__(self, n_factors=20, n_epochs=20, init_mean=0, init_std_dev=.1, bsl_options={},
                  lr_all=.007, reg_all=.02, lr_bu=None, lr_bi=None, lr_pu=None,
                  lr_qi=None, lr_yj=None, reg_bu=None, reg_bi=None, reg_pu=None,
-                 reg_qi=None, reg_yj=None, verbose=False):
+                 reg_qi=None, reg_yj=None, shuffle_sgd=True, verbose=False):
 
         self.n_factors = n_factors
         self.n_epochs = n_epochs
@@ -344,13 +371,15 @@ class SVDpp(AlgoBase):
         self.reg_pu = reg_pu if reg_pu is not None else reg_all
         self.reg_qi = reg_qi if reg_qi is not None else reg_all
         self.reg_yj = reg_yj if reg_yj is not None else reg_all
+        self.shuffle_sgd = shuffle_sgd
         self.verbose = verbose
 
-        AlgoBase.__init__(self)
+        AlgoBase.__init__(self, bsl_options=bsl_options)
 
     def train(self, trainset):
-
         AlgoBase.train(self, trainset)
+        self.sqrt_Iu = np.zeros(trainset.n_users, np.double)
+        self.bu, self.bi = self.compute_baselines()
         self.sgd(trainset)
 
     def sgd(self, trainset):
@@ -365,9 +394,20 @@ class SVDpp(AlgoBase):
         cdef np.ndarray[np.double_t, ndim=2] qi
         # item implicit factors
         cdef np.ndarray[np.double_t, ndim=2] yj
+        
+        cdef double global_err
+        
+        # Fixed parameters for each users, no need to update at each iteration over ratings
+        cdef np.ndarray[list] Iu
+        cdef np.ndarray[np.double_t] sqrt_Iu
+        sqrt_Iu = np.zeros(trainset.n_users, np.double)
+        Iu = np.empty(trainset.n_users, dtype=list)
+        
+        # For shuffled iteration
+        cdef list all_ratings = []
 
         cdef int u, i, j, f
-        cdef double r, err, dot, puf, qif, sqrt_Iu, _
+        cdef double r, err, dot, puf, qif
         cdef double global_mean = self.trainset.global_mean
         cdef np.ndarray[np.double_t] u_impl_fdb
 
@@ -382,39 +422,74 @@ class SVDpp(AlgoBase):
         cdef double reg_pu = self.reg_pu
         cdef double reg_qi = self.reg_qi
         cdef double reg_yj = self.reg_yj
-
-        bu = np.zeros(trainset.n_users, np.double)
-        bi = np.zeros(trainset.n_items, np.double)
+        
+############# NEW_CODE ###########
+        bu = self.bu
+        bi = self.bi
+##################################
 
         pu = np.random.normal(self.init_mean, self.init_std_dev,
                               (trainset.n_users, self.n_factors))
         qi = np.random.normal(self.init_mean, self.init_std_dev,
                               (trainset.n_items, self.n_factors))
-        yj = np.random.normal(self.init_mean, self.init_std_dev,
-                              (trainset.n_items, self.n_factors))
+        yj = np.zeros((trainset.n_items, self.n_factors))
         u_impl_fdb = np.zeros(self.n_factors, np.double)
 
+############# NEW_CODE ###########
+        
+        # Find fixed user info
+        if self.verbose:
+                print(" Building user fixed info...")
+        for u in trainset.all_users():
+            # number of items rated by users
+            Iu[u] = [j for (j, _) in trainset.ur[u]]
+            sqrt_Iu[u] = np.sqrt(len(Iu[u]))
+            self.sqrt_Iu[u] = sqrt_Iu[u]
+        
         for current_epoch in range(self.n_epochs):
             if self.verbose:
                 print(" processing epoch {}".format(current_epoch))
-            for u, i, r in trainset.all_ratings():
-
-                # items rated by u. This is COSTLY
-                Iu = [j for (j, _) in trainset.ur[u]]
-                sqrt_Iu = np.sqrt(len(Iu))
+                start = time.time()
+                global_err = 0
+            
+            # Iterate over all ratings
+            all_ratings = list(trainset.all_ratings())
+            
+            # Shuffle ratings order
+            if self.shuffle_sgd:
+                np.random.shuffle(all_ratings)
+                
+            # Wrap with tqdm if verbose is True
+            if self.verbose:
+                iterator = tqdm(all_ratings, mininterval=10)
+            else:
+                iterator = all_ratings
+                
+            for u, i, r in iterator:
+            
+##################################
 
                 # compute user implicit feedback
                 u_impl_fdb = np.zeros(self.n_factors, np.double)
-                for j in Iu:
-                    for f in range(self.n_factors):
-                        u_impl_fdb[f] += yj[j, f] / sqrt_Iu
+                for f in range(self.n_factors):
+                    for j in Iu[u]:
+                        u_impl_fdb[f] += yj[j, f]
+                    u_impl_fdb[f] /= sqrt_Iu[u]
 
                 # compute current error
                 dot = 0  # <q_i, (p_u + sum_{j in Iu} y_j / sqrt{Iu}>
                 for f in range(self.n_factors):
                     dot += qi[i, f] * (pu[u, f] + u_impl_fdb[f])
 
-                err = r - (global_mean + bu[u] + bi[i] + dot)
+                # Evaluate prediction
+                err = global_mean + bu[u] + bi[i] + dot
+                
+                if self.verbose:
+                    # Clip predicted rating for accuracy estimation
+                    global_err += np.square(r - np.clip(err,1,5))
+                   
+                # Evaluate error
+                err = r - err
 
                 # update biases
                 bu[u] += lr_bu * (err - reg_bu * bu[u])
@@ -427,10 +502,25 @@ class SVDpp(AlgoBase):
                     pu[u, f] += lr_pu * (err * qif - reg_pu * puf)
                     qi[i, f] += lr_qi * (err * (puf + u_impl_fdb[f]) -
                                          reg_qi * qif)
-                    for j in Iu:
-                        yj[j, f] += lr_yj * (err * qif / sqrt_Iu -
+                    for j in Iu[u]:
+                        yj[j, f] += lr_yj * (err * qif / sqrt_Iu[u] -
                                              reg_yj * yj[j, f])
 
+############# NEW_CODE ###########
+            lr_bu *= 0.9
+            lr_bi *= 0.9
+            lr_pu *= 0.9
+            lr_qi *= 0.9
+            lr_yj *= 0.9
+##################################
+            
+            # Print time info
+            if self.verbose:
+                end = time.time()
+                print('global_err: ', np.sqrt(global_err / trainset.n_ratings))
+                print('Time for the it: ', end - start)
+                                             
+                                             
         self.bu = bu
         self.bi = bi
         self.pu = pu
@@ -448,14 +538,13 @@ class SVDpp(AlgoBase):
             est += self.bi[i]
 
         if self.trainset.knows_user(u) and self.trainset.knows_item(i):
-            Iu = len(self.trainset.ur[u])  # nb of items rated by u
             u_impl_feedback = (sum(self.yj[j] for (j, _)
-                               in self.trainset.ur[u]) / np.sqrt(Iu))
+                               in self.trainset.ur[u]) / self.sqrt_Iu[u])
             est += np.dot(self.qi[i], self.pu[u] + u_impl_feedback)
 
         return est
 
-
+        
 class NMF(AlgoBase):
     """A collaborative filtering algorithm based on Non-negative Matrix
     Factorization.

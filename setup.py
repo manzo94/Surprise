@@ -54,6 +54,10 @@ extensions = [
         include_dirs=[np.get_include()]
     ),
     Extension(
+        'surprise.prediction_algorithms.factorized_neighborhood',
+        ['surprise/prediction_algorithms/factorized_neighborhood' + ext],
+        include_dirs=[np.get_include()]),
+    Extension(
         'surprise.prediction_algorithms.matrix_factorization',
         ['surprise/prediction_algorithms/matrix_factorization' + ext],
         include_dirs=[np.get_include()]),

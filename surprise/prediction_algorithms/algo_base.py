@@ -218,7 +218,12 @@ class AlgoBase:
         name = self.sim_options.get('name', 'msd').lower()
         if name == 'pearson_baseline':
             shrinkage = self.sim_options.get('shrinkage', 100)
-            bu, bi = self.compute_baselines()
+            
+############## Check if baselines are already computed #######################
+            if (self.bu is None) or (self.bi is None):
+                bu, bi = self.compute_baselines()
+##############################################################################
+            
             if self.sim_options['user_based']:
                 bx, by = bu, bi
             else:
@@ -264,6 +269,6 @@ class AlgoBase:
 
         others = [(x, self.sim[iid, x]) for x in all_instances() if x != iid]
         others.sort(key=lambda tple: tple[1], reverse=True)
-        k_nearest_neighbors = [j for (j, _) in others[:k]]
+        k_nearest_neighbors = [j for (j, s) in others[:k] if s != 0]
 
         return k_nearest_neighbors
