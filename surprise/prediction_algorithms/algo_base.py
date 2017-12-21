@@ -221,7 +221,10 @@ class AlgoBase:
             
 ############## Check if baselines are already computed #######################
             if (self.bu is None) or (self.bi is None):
-                bu, bi = self.compute_baselines()
+                self.bu, self.bi = self.compute_baselines()
+            
+            bu = self.bu
+            bi = self.bi
 ##############################################################################
             
             if self.sim_options['user_based']:
