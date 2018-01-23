@@ -9,6 +9,7 @@ from .prediction_algorithms import KNNWithZScore
 from .prediction_algorithms import KNNBaseline
 from .prediction_algorithms import SVD
 from .prediction_algorithms import SVDpp
+from .prediction_algorithms import SVDsmooth
 from .prediction_algorithms import NMF
 from .prediction_algorithms import SlopeOne
 from .prediction_algorithms import CoClustering
@@ -27,7 +28,7 @@ from . import model_selection
 from . import dump
 
 __all__ = ['AlgoBase', 'NormalPredictor', 'BaselineOnly', 'KNNBasic',
-           'KNNWithMeans', 'KNNBaseline', 'SVD', 'SVDpp', 'NMF', 'SlopeOne',
+           'KNNWithMeans', 'KNNBaseline', 'SVD', 'SVDpp', 'SVDsmooth', 'NMF', 'SlopeOne',
            'CoClustering', 'PredictionImpossible', 'Prediction', 'Dataset',
            'Reader', 'Trainset', 'evaluate', 'print_perf', 'GridSearch',
            'dump', 'KNNWithZScore', 'get_dataset_dir', 'model_selection']

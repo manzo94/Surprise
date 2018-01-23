@@ -14,6 +14,158 @@ from .algo_base import AlgoBase
 from .predictions import PredictionImpossible
 from ..utils import get_rng
 
+from tqdm import tqdm
+
+class SVDsmooth(AlgoBase):
+
+    def __init__(self,L=None , n_factors=100, n_epochs=20, biased=True, init_mean=0,
+                 init_std_dev=.1, lr_all=.005,
+                 alpha=.01, lr_bu=None, lr_bi=None, lr_pu=None, lr_qi=None,
+                 random_state=None, verbose=False):
+
+        self.n_factors = n_factors
+        self.n_epochs = n_epochs
+        self.biased = biased
+        self.init_mean = init_mean
+        self.init_std_dev = init_std_dev
+        self.lr_bu = lr_bu if lr_bu is not None else lr_all
+        self.lr_bi = lr_bi if lr_bi is not None else lr_all
+        self.lr_pu = lr_pu if lr_pu is not None else lr_all
+        self.lr_qi = lr_qi if lr_qi is not None else lr_all
+        self.alpha = alpha
+        
+        # Check if L is given, otherwise raise an error
+        if L is not None:
+            self.L = L
+        else:
+            raise ValueError('L must be given')
+            
+        self.random_state = random_state
+        self.verbose = verbose
+
+        AlgoBase.__init__(self)
+
+    def fit(self, trainset):
+
+        AlgoBase.fit(self, trainset)
+        self.sgd(trainset)
+
+        return self
+
+    def sgd(self, trainset):
+
+        # user biases
+        cdef np.ndarray[np.double_t] bu
+        # item biases
+        cdef np.ndarray[np.double_t] bi
+        # user factors
+        cdef np.ndarray[np.double_t, ndim=2] pu
+        # item factors
+        cdef np.ndarray[np.double_t, ndim=2] qi
+        
+        cdef int u, i, f, k, n
+        cdef double r, err, dot, puf, qif, est, w
+        cdef double global_mean = self.trainset.global_mean
+
+        cdef double lr_bu = self.lr_bu
+        cdef double lr_bi = self.lr_bi
+        cdef double lr_pu = self.lr_pu
+        cdef double lr_qi = self.lr_qi
+        
+        cdef int nuser = trainset.n_users
+        cdef int nfactor = self.n_factors
+        cdef np.ndarray[list] neighs = np.empty(nuser, dtype='object')
+
+        cdef double alpha = self.alpha
+        cdef np.ndarray[np.double_t] regq = np.zeros(self.n_factors)
+        cdef np.ndarray[np.double_t, ndim=2] L = self.L
+
+        rng = get_rng(self.random_state)
+
+        bu = np.zeros(trainset.n_users, np.double)
+        bi = np.zeros(trainset.n_items, np.double)
+        pu = rng.normal(self.init_mean, self.init_std_dev,
+                        (trainset.n_users, self.n_factors))
+        qi = rng.normal(self.init_mean, self.init_std_dev,
+                        (trainset.n_items, self.n_factors))
+
+        if not self.biased:
+            global_mean = 0
+            
+        # Precompute list of non zero connections
+        # in the graph for each user with the relative weight
+        for u in range(nuser):
+            neighs[u] = [(k, L[u,k]) for k in range(nuser) if L[u,k]!=0]
+
+        for current_epoch in tqdm(range(self.n_epochs)):
+            if self.verbose:
+                print("Processing epoch {}".format(current_epoch))
+            for u, i, r in trainset.all_ratings():
+
+                # compute current error
+                dot = 0  # <q_i, p_u>
+                for f in range(self.n_factors):
+                    dot += qi[i, f] * pu[u, f]
+                est = global_mean + bu[u] + bi[i] + dot
+                err = r - est
+                
+                # Compute regularization term
+                reg = 0
+                regq = np.zeros(nfactor)
+                for k,w in neighs[u]:
+                    dot = 0
+                    for f in range(self.n_factors):
+                        dot += qi[i, f] * pu[k, f]
+                    reg += w * (est + global_mean + bu[k] + bi[i] + dot)
+                    
+                    for f in range(self.n_factors):
+                        regq[f] += w * (pu[k, f]*est + pu[u,f]*(global_mean + bu[k] + bi[i] + dot))
+                        
+                    
+
+                # update biases
+                if self.biased:
+                    bu[u] += lr_bu * (err - alpha * reg)
+                    bi[i] += lr_bi * (err - alpha * reg)
+
+                # update factors
+                for f in range(self.n_factors):
+                    puf = pu[u, f]
+                    qif = qi[i, f]
+                    pu[u, f] += lr_pu * qif * (err - alpha*reg)
+                    qi[i, f] += lr_qi * (err * puf - alpha*regq[f])
+
+        self.bu = bu
+        self.bi = bi
+        self.pu = pu
+        self.qi = qi
+
+    def estimate(self, u, i):
+        # Should we cythonize this as well?
+
+        known_user = self.trainset.knows_user(u)
+        known_item = self.trainset.knows_item(i)
+
+        if self.biased:
+            est = self.trainset.global_mean
+
+            if known_user:
+                est += self.bu[u]
+
+            if known_item:
+                est += self.bi[i]
+
+            if known_user and known_item:
+                est += np.dot(self.qi[i], self.pu[u])
+
+        else:
+            if known_user and known_item:
+                est = np.dot(self.qi[i], self.pu[u])
+            else:
+                raise PredictionImpossible('User and item are unkown.')
+
+        return est
+
 
 class SVD(AlgoBase):
     """The famous *SVD* algorithm, as popularized by `Simon Funk
