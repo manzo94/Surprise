@@ -17,6 +17,52 @@ from ..utils import get_rng
 from tqdm import tqdm
 
 class SVDsmooth(AlgoBase):
+    """ SVD algorithm that use a smoothing graph term as regulizer.
+
+    Args:
+        L: Laplacian of the graph on which you want to smooth
+        n_factors: The number of factors. Default is ``100``.
+        n_epochs: The number of iteration of the SGD procedure. Default is
+            ``20``.
+        biased(bool): Whether to use baselines (or biases). See :ref:`note
+            <unbiased_note>` above.  Default is ``True``.
+        init_mean: The mean of the normal distribution for factor vectors
+            initialization. Default is ``0``.
+        init_std_dev: The standard deviation of the normal distribution for
+            factor vectors initialization. Default is ``0.1``.
+        lr_all: The learning rate for all parameters. Default is ``0.005``.
+        reg_all: The regularization term for all parameters. Default is
+            ``0.02``.
+        lr_bu: The learning rate for :math:`b_u`. Takes precedence over
+            ``lr_all`` if set. Default is ``None``.
+        lr_bi: The learning rate for :math:`b_i`. Takes precedence over
+            ``lr_all`` if set. Default is ``None``.
+        lr_pu: The learning rate for :math:`p_u`. Takes precedence over
+            ``lr_all`` if set. Default is ``None``.
+        lr_qi: The learning rate for :math:`q_i`. Takes precedence over
+            ``lr_all`` if set. Default is ``None``.
+        reg_bu: The regularization term for :math:`b_u`. Takes precedence
+            over ``reg_all`` if set. Default is ``None``.
+        alpha: coefficient of the smooth regulizer
+        random_state(int, RandomState instance from numpy, or ``None``):
+            Determines the RNG that will be used for initialization. If
+            int, ``random_state`` will be used as a seed for a new RNG. This is
+            useful to get the same initialization over multiple calls to
+            ``fit()``.  If RandomState instance, this same instance is used as
+            RNG. If ``None``, the current RNG from numpy is used.  Default is
+            ``None``.
+        verbose: If ``True``, prints the current epoch. Default is ``False``.
+
+    Attributes:
+        pu(numpy array of size (n_users, n_factors)): The user factors (only
+            exists if ``fit()`` has been called)
+        qi(numpy array of size (n_items, n_factors)): The item factors (only
+            exists if ``fit()`` has been called)
+        bu(numpy array of size (n_users)): The user biases (only
+            exists if ``fit()`` has been called)
+        bi(numpy array of size (n_items)): The item biases (only
+            exists if ``fit()`` has been called)
+    """
 
     def __init__(self,L=None , n_factors=100, n_epochs=20, biased=True, init_mean=0,
                  init_std_dev=.1, lr_all=.005,
