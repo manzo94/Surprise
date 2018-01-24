@@ -258,10 +258,10 @@ class DatasetUserFolds(Dataset):
         self.folds_files = folds_files
 
         # check that all files actually exist.
-        for train_test_files in self.folds_files:
-            for f in train_test_files:
-                if not os.path.isfile(os.path.expanduser(f)):
-                    raise ValueError('File ' + str(f) + ' does not exist.')
+        #for train_test_files in self.folds_files:
+        #    for f in train_test_files:
+        #        if not os.path.isfile(os.path.expanduser(f)):
+        #            raise ValueError('File ' + str(f) + ' does not exist.')
 
     def raw_folds(self):
         for train_file, test_file in self.folds_files:
